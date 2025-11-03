@@ -13,32 +13,72 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: 22.14.0
+  TERM: xterm
+
 jobs:
   analyze:
     permissions:
       security-events: write
     name: Analyze
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     strategy:
       fail-fast: false
       matrix:
-        language: 
+        language:
           - 'javascript-typescript'
           - 'java-kotlin'
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Setup Node.js
+      if: matrix.language == 'javascript-typescript' || matrix.language == 'java-kotlin'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Setup Java
+      if: matrix.language == 'java-kotlin'
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: Install npm dependencies
+      if: matrix.language == 'javascript-typescript' || matrix.language == 'java-kotlin'
+      run: npm ci
+
+    - name: Jetify Android libraries
+      if: matrix.language == 'java-kotlin'
+      run: ./node_modules/.bin/jetify
+
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
         config-file: ./.github/codeql/codeql-config.yml
+        # Enable comprehensive security queries for thorough analysis
+        queries: +security-extended,security-and-quality
 
-    # Autobuild attempts to build any compiled languages
+    # Build APK for Java/Kotlin analysis to ensure all native code is compiled
+    - name: Build Android Debug APK
+      if: matrix.language == 'java-kotlin'
+      run: |
+        cd android
+        ./gradlew assembleDebug --no-daemon --stacktrace
+      env:
+        JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
+
+    # Autobuild for JavaScript/TypeScript analysis
     - name: Autobuild
+      if: matrix.language == 'javascript-typescript'
       uses: github/codeql-action/autobuild@v3
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{ matrix.language }}"
